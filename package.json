@@ -1,0 +1,21 @@
+{
+  "name": "ocr-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0",
+  "scripts": {
+    "dev": "node scripts/prepare-assets.mjs && vite",
+    "build": "node scripts/prepare-assets.mjs && vite build",
+    "verify": "node scripts/verify-build.mjs"
+  },
+  "dependencies": {
+    "@tesseract.js-data/spa": "1.0.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "scribe.js-ocr": "0.15.0"
+  },
+  "devDependencies": {
+    "vite": "7.1.7"
+  }
+}
