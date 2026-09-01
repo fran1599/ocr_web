@@ -159,7 +159,7 @@ function App() {
       const pages = Number(doc.inputData?.pageCount ?? doc.pageMetrics?.length ?? 0);
       setPageCount(pages);
       setStatus('Iniciando el motor OCR en español…');
-      await doc.recognize({ langs: ['spa'], ocrPages: 'all', skipFontOpt: true });
+      await doc.recognize({\n        langs: ['spa'],\n        ocrPages: 'all',\n        mode: 'quality',\n        skipFontOpt: true,\n      });
 
       let blob;
       let name;
