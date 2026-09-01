@@ -17,6 +17,6 @@ for (const directory of ['js', 'tess', 'fonts', 'lib']) {
   cpSync(join(source, directory), join(destination, directory), { recursive: true });
 }
 cpSync(
-  join(root, 'node_modules', '@tesseract.js-data', 'spa', '4.0.0_best_int', 'spa.traineddata.gz'),
+  join(root, 'node_modules', '@tesseract.js-data', 'spa', '4.0.0', 'spa.traineddata.gz'),
   join(publicDir, 'tessdata', 'spa.traineddata.gz'),
 );
