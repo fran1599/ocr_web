@@ -4,7 +4,7 @@ const required = [
   'dist/index.html',
   'dist/scribe/scribe.js',
   'dist/scribe/tess/core/tesseract-core-simd-lstm.wasm',
-  'dist/tessdata/spa.traineddata.gz',
+  'dist/tessdata-v2/spa.traineddata.gz',
 ];
 
 for (const path of required) accessSync(path);
