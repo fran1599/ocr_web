@@ -30,6 +30,7 @@ function App() {
   const inputRef = useRef(null);
   const docRef = useRef(null);
   const resultUrlRef = useRef(null);
+  const completedPagesRef = useRef(new Set());
   const [file, setFile] = useState(null);
   const [format, setFormat] = useState('md');
   const [stage, setStage] = useState('empty');
@@ -63,8 +64,9 @@ function App() {
       Math.min(4, navigator.hardwareConcurrency ? navigator.hardwareConcurrency - 1 : 2),
     );
     scribe.opt.progressHandler = (message) => {
-      if (message.type === 'recognize' && Number.isInteger(message.n)) {
-        setCurrentPage(message.n + 1);
+      if (message.type === 'convert' && Number.isInteger(message.n)) {
+        completedPagesRef.current.add(message.n);
+        setCurrentPage(completedPagesRef.current.size);
         setStatus('Reconociendo texto…');
       } else if (message.type === 'export') {
         setStatus('Preparando el archivo…');
@@ -146,6 +148,7 @@ function App() {
     setError('');
     setDiagnostic('');
     setCurrentPage(0);
+    completedPagesRef.current.clear();
 
     try {
       const scribe = await loadScribe();
@@ -209,6 +212,7 @@ function App() {
     setStage('empty');
     setPageCount(null);
     setCurrentPage(0);
+    completedPagesRef.current.clear();
     setStatus('');
     setError('');
     setDiagnostic('');
@@ -311,7 +315,7 @@ function App() {
             <h2>Procesando documento…</h2>
             <p>{status}</p>
             <div className="progress-copy">
-              <span>{pageCount ? `Página ${Math.max(1, currentPage)} de ${pageCount}` : 'Preparando páginas'}</span>
+              <span>{pageCount ? `${currentPage} de ${pageCount} páginas procesadas` : 'Preparando páginas'}</span>
               <span>{pageCount ? `${progress}%` : ''}</span>
             </div>
             <div className="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}>
