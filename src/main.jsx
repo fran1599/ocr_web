@@ -57,7 +57,7 @@ function App() {
   }, []);
 
   function configureScribe(scribe) {
-    scribe.opt.langPath = new URL('tessdata', assetBase).href.replace(/\/$/, '');
+    scribe.opt.langPath = new URL('tessdata-v2', assetBase).href.replace(/\/$/, '');
     scribe.opt.workerN = Math.max(
       1,
       Math.min(4, navigator.hardwareConcurrency ? navigator.hardwareConcurrency - 1 : 2),
@@ -159,7 +159,12 @@ function App() {
       const pages = Number(doc.inputData?.pageCount ?? doc.pageMetrics?.length ?? 0);
       setPageCount(pages);
       setStatus('Iniciando el motor OCR en español…');
-      await doc.recognize({\n        langs: ['spa'],\n        ocrPages: 'all',\n        mode: 'quality',\n        skipFontOpt: true,\n      });
+      await doc.recognize({
+        langs: ['spa'],
+        ocrPages: 'all',
+        mode: 'quality',
+        skipFontOpt: true,
+      });
 
       let blob;
       let name;
