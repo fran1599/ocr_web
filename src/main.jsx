@@ -2,17 +2,47 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
-const MAX_BYTES = 250 * 1024 * 1024;
+const MEBIBYTE = 1024 * 1024;
+const BALANCED_MAX_BYTES = 250 * MEBIBYTE;
+const MAX_BYTES = 500 * MEBIBYTE;
 let scribeInstance = null;
+let activeWorkerN = null;
+
+function getResourceProfile(bytes) {
+  if (bytes > BALANCED_MAX_BYTES) {
+    return {
+      key: 'saving',
+      label: 'Modo ahorro automático',
+      workerLimit: 1,
+      explanation: 'El archivo supera 250 MB. Se procesará una página a la vez para reducir el pico de memoria; puede demorar más.',
+    };
+  }
+  return {
+    key: 'balanced',
+    label: 'Modo equilibrado',
+    workerLimit: 2,
+    explanation: 'Usa hasta dos tareas OCR simultáneas para equilibrar velocidad, memoria y capacidad de respuesta.',
+  };
+}
+
+function getWorkerCount(profile) {
+  const available = navigator.hardwareConcurrency || 4;
+  return Math.max(1, Math.min(profile.workerLimit, available - 1));
+}
 
 const assetBase = new URL(import.meta.env.BASE_URL, window.location.origin);
 
-async function loadScribe() {
+async function loadScribe(workerN) {
   if (!scribeInstance) {
     const moduleUrl = new URL('scribe/scribe.js', assetBase).href;
     const module = await import(/* @vite-ignore */ moduleUrl);
     scribeInstance = module.default;
   }
+  if (activeWorkerN !== null && activeWorkerN !== workerN) {
+    await scribeInstance.terminate();
+  }
+  scribeInstance.opt.workerN = workerN;
+  activeWorkerN = workerN;
   return scribeInstance;
 }
 
@@ -54,15 +84,12 @@ function App() {
   useEffect(() => () => {
     if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
     void docRef.current?.close?.();
+    activeWorkerN = null;
     void scribeInstance?.terminate?.();
   }, []);
 
   function configureScribe(scribe) {
     scribe.opt.langPath = new URL('tessdata-v2', assetBase).href.replace(/\/$/, '');
-    scribe.opt.workerN = Math.max(
-      1,
-      Math.min(4, navigator.hardwareConcurrency ? navigator.hardwareConcurrency - 1 : 2),
-    );
     scribe.opt.progressHandler = (message) => {
       if (message.type === 'convert' && Number.isInteger(message.n)) {
         completedPagesRef.current.add(message.n);
@@ -98,20 +125,28 @@ function App() {
     if (candidate.size > MAX_BYTES) {
       setFile(null);
       setStage('error');
-      setError('El archivo supera los 250 MB. Probá con un documento más pequeño.');
+      setStatus('');
+      setError('El archivo supera el límite de 500 MB. Un documento de ese tamaño puede agotar la memoria del navegador. Dividilo en archivos más pequeños y procesalos por separado.');
       return;
     }
 
+    const profile = getResourceProfile(candidate.size);
+    const workerN = getWorkerCount(profile);
     setFile(candidate);
     setStage('inspecting');
-    setStatus('Leyendo el PDF local…');
+    setStatus(
+      profile.key === 'saving'
+        ? 'Archivo grande detectado. Activando el modo ahorro…'
+        : 'Analizando el PDF en este dispositivo…',
+    );
 
     try {
       if (!('Worker' in window) || !('WebAssembly' in window)) {
         throw new Error('Este navegador no dispone de Web Workers o WebAssembly.');
       }
-      const scribe = await loadScribe();
+      const scribe = await loadScribe(workerN);
       configureScribe(scribe);
+      setStatus('Leyendo la estructura y contando las páginas…');
       const doc = await scribe.openDocument([candidate], {
         deferText: true,
         skipFontOpt: true,
@@ -121,6 +156,7 @@ function App() {
       const pages = Number(doc.inputData?.pageCount ?? doc.pageMetrics?.length ?? 0);
       if (!pages) throw new Error('No se encontraron páginas en el PDF.');
       setPageCount(pages);
+      setStatus(`Documento listo. ${profile.label} activado.`);
       setStage('ready');
     } catch (cause) {
       handleError(cause);
@@ -150,8 +186,12 @@ function App() {
     setCurrentPage(0);
     completedPagesRef.current.clear();
 
+    const profile = getResourceProfile(file.size);
+    const workerN = getWorkerCount(profile);
+    setStatus(`Preparando ${profile.label.toLowerCase()}…`);
+
     try {
-      const scribe = await loadScribe();
+      const scribe = await loadScribe(workerN);
       configureScribe(scribe);
       let doc = docRef.current;
       if (!doc) {
@@ -222,6 +262,7 @@ function App() {
   const progress = pageCount
     ? Math.min(100, Math.round((currentPage / pageCount) * 100))
     : 4;
+  const resourceProfile = getResourceProfile(file?.size ?? 0);
 
   return (
     <main className="shell">
@@ -266,6 +307,14 @@ function App() {
               <span aria-hidden="true">◆</span> Procesamiento local: tus documentos no se
               suben ni se almacenan en ningún servidor.
             </p>
+            <details className="limits">
+              <summary>Límites y uso de recursos</summary>
+              <ul>
+                <li><strong>Hasta 250 MB:</strong> modo equilibrado, con hasta dos tareas OCR simultáneas.</li>
+                <li><strong>Entre 250 y 500 MB:</strong> modo ahorro automático, una página a la vez y mayor demora.</li>
+                <li><strong>Más de 500 MB:</strong> se solicita dividir el PDF para evitar agotar la memoria del navegador.</li>
+              </ul>
+            </details>
           </>
         )}
 
@@ -287,6 +336,11 @@ function App() {
                 <span>{humanSize(file.size)} · {pageCount} {pageCount === 1 ? 'página' : 'páginas'}</span>
               </div>
               <button className="icon-button" onClick={() => void reset()} aria-label="Quitar archivo">×</button>
+            </div>
+
+            <div className={`resource-note ${resourceProfile.key}`} role="status">
+              <strong>{resourceProfile.label}</strong>
+              <span>{resourceProfile.explanation}</span>
             </div>
 
             <fieldset>
@@ -321,7 +375,10 @@ function App() {
             <div className="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}>
               <i style={{ width: `${progress}%` }} />
             </div>
-            <small>Podés seguir usando esta pestaña mientras el OCR trabaja.</small>
+            <div className="process-notes">
+              <small>{resourceProfile.label}: {resourceProfile.key === 'saving' ? 'una página a la vez para reducir memoria.' : 'hasta dos páginas en paralelo.'}</small>
+              <small>Podés seguir usando esta pestaña; mantenela abierta hasta que termine.</small>
+            </div>
           </div>
         )}
 
