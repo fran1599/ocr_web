@@ -18,6 +18,22 @@ No se incorporan cuentas, analíticas, telemetría, almacenamiento persistente n
 - Informe de páginas fallidas, sin texto o con baja confianza.
 - Política automática de recursos según el tamaño del archivo.
 
+## Versión experimental
+
+La versión estable se publica en la raíz del sitio. La prueba paralela se publica en [`/pruebas/v1/`](https://fran1599.github.io/ocr_web/pruebas/v1/) y no modifica el flujo de la versión estable.
+
+La prueba v1 incorpora:
+
+- selección manual entre Ahorro, Equilibrado y Turbo;
+- límite Turbo dinámico según los procesadores lógicos y, cuando el navegador lo informa, la memoria aproximada;
+- tiempo transcurrido y estimación restante;
+- opción para mantener la pantalla activa durante procesos largos;
+- advertencia específica para documentos de más de 400 páginas;
+- modo oscuro y temas visuales accesibles;
+- explicaciones más precisas para páginas sin texto o con confianza baja.
+
+Turbo aumenta el paralelismo del OCR, pero no controla ventiladores, voltajes ni configuraciones físicas del equipo. Puede aumentar el consumo, la temperatura y el uso de memoria. No elimina el límite máximo de 500 MB.
+
 ## Compatibilidad y límites
 
 Se recomiendan versiones actuales de Chrome, Edge, Brave o Firefox en una computadora. Safari requiere validación específica. Los dispositivos móviles se consideran experimentales para documentos grandes debido a sus límites de memoria.
@@ -27,6 +43,8 @@ Se recomiendan versiones actuales de Chrome, Edge, Brave o Firefox en una comput
 - Más de 500 MB: no se abre el documento para evitar agotar la memoria del navegador.
 
 La confianza informada por el OCR es una estimación y no reemplaza la revisión humana.
+
+La cantidad de páginas también importa: un archivo liviano con cientos de páginas puede exigir más memoria y tiempo que otro archivo más pesado pero corto. Para documentos extensos se recomienda probar primero un rango representativo.
 
 ## Desarrollo
 
