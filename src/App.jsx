@@ -1,9 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
+import './version.css';
 
 const MEBIBYTE = 1024 * 1024;
 const BALANCED_MAX_BYTES = 250 * MEBIBYTE;
 const MAX_BYTES = 500 * MEBIBYTE;
 const LOW_CONFIDENCE_THRESHOLD = 60;
+const READABLE_TEXT_MIN = 100;
+const BODY_TEXT_MIN = 100;
+const STRONG_VISIBLE_TEXT_MIN = 200;
+const BROKEN_TEXT_MIN = 100;
+const FULL_PAGE_IMAGE_MIN = 0.95;
+const EXISTING_OCR_MIN = 100;
+const NON_TRIVIAL_IMAGE_MIN = 0.02;
 const REPOSITORY_URL = 'https://github.com/fran1599/ocr_web';
 let scribeInstance = null;
 let activeWorkerN = null;
@@ -121,6 +129,34 @@ function selectedPageIndices(pageCount, mode, start, end) {
   return Array.from({ length: last - first + 1 }, (_, index) => first - 1 + index);
 }
 
+function classifyExistingPage(stats) {
+  if (!stats) return 'ocr';
+  const empty = stats.visibleChars === 0
+    && stats.invisibleTextChars === 0
+    && stats.largestImageFrac < NON_TRIVIAL_IMAGE_MIN;
+  if (empty) return 'blank';
+
+  const brokenText = stats.longestBrokenRun >= BROKEN_TEXT_MIN;
+  const existingOcrLayer = stats.largestImageFrac >= FULL_PAGE_IMAGE_MIN
+    && stats.invisibleTextChars >= EXISTING_OCR_MIN;
+  const readableNativeText = stats.bodyReadableChars >= BODY_TEXT_MIN
+    || stats.visibleReadableChars >= STRONG_VISIBLE_TEXT_MIN
+    || (stats.visibleReadableChars >= READABLE_TEXT_MIN && stats.largestImageFrac < FULL_PAGE_IMAGE_MIN);
+
+  return !brokenText && (existingOcrLayer || readableNativeText) ? 'text' : 'ocr';
+}
+
+function auditDocument(doc, pageCount) {
+  const stats = doc.inputData?.pageStats;
+  return Array.from({ length: pageCount }, (_, index) => classifyExistingPage(stats?.[index]));
+}
+
+function summarizeAudit(audit, pageIndices) {
+  const summary = { text: 0, ocr: 0, blank: 0 };
+  for (const pageIndex of pageIndices) summary[audit?.[pageIndex] ?? 'ocr'] += 1;
+  return summary;
+}
+
 function warningText(value) {
   if (value && typeof value === 'object' && 'message' in value) return String(value.message);
   return String(value ?? 'Advertencia sin detalle');
@@ -184,6 +220,8 @@ export default function App({ experimental = false }) {
   const [rangeEnd, setRangeEnd] = useState(1);
   const [qualityIssues, setQualityIssues] = useState([]);
   const [engineWarnings, setEngineWarnings] = useState([]);
+  const [pageAudit, setPageAudit] = useState(null);
+  const [auditMode, setAuditMode] = useState('smart');
   const [performanceMode, setPerformanceMode] = useState('balanced');
   const [theme, setTheme] = useState(() => (experimental ? localStorage.getItem('ocr-local-theme') || 'system' : 'system'));
   const [keepAwake, setKeepAwake] = useState(true);
@@ -294,6 +332,8 @@ export default function App({ experimental = false }) {
     setError('');
     setDiagnostic('');
     setPageCount(null);
+    setPageAudit(null);
+    setAuditMode('smart');
     setActivity([]);
 
     if (!candidate) return;
@@ -351,6 +391,14 @@ export default function App({ experimental = false }) {
       setRangeMode('all');
       setRangeStart(1);
       setRangeEnd(pages);
+      if (experimental) {
+        announce('Auditoría previa: detectando páginas con texto seleccionable…');
+        await doc.textReady;
+        const audit = auditDocument(doc, pages);
+        const auditSummary = summarizeAudit(audit, Array.from({ length: pages }, (_, index) => index));
+        setPageAudit(audit);
+        announce(`Auditoría lista: ${auditSummary.text} con texto reutilizable, ${auditSummary.ocr} para OCR y ${auditSummary.blank} en blanco.`);
+      }
       announce(`Documento listo: ${pages} ${pages === 1 ? 'página' : 'páginas'}. ${profile.label} activado.`);
       setStage('ready');
     } catch (cause) {
@@ -375,8 +423,14 @@ export default function App({ experimental = false }) {
 
   async function processDocument() {
     if (!file) return;
-    const pagesToProcess = selectedPageIndices(pageCount, rangeMode, rangeStart, rangeEnd);
-    if (pagesToProcess.length === 0) return;
+    const pagesForOutput = selectedPageIndices(pageCount, rangeMode, rangeStart, rangeEnd);
+    if (pagesForOutput.length === 0) return;
+    const pagesToProcess = experimental && auditMode === 'smart' && pageAudit
+      ? pagesForOutput.filter((pageIndex) => pageAudit[pageIndex] === 'ocr')
+      : pagesForOutput;
+    const auditSummary = experimental && pageAudit
+      ? summarizeAudit(pageAudit, pagesForOutput)
+      : { text: 0, ocr: pagesToProcess.length, blank: 0 };
 
     setStage('processing');
     setError('');
@@ -414,13 +468,20 @@ export default function App({ experimental = false }) {
       const pages = Number(doc.inputData?.pageCount ?? doc.pageMetrics?.length ?? 0);
       setPageCount(pages);
       const pageMask = Array.from({ length: pages }, (_, index) => selectedPagesRef.current.has(index));
-      announce(`Iniciando OCR en español para ${pagesToProcess.length} ${pagesToProcess.length === 1 ? 'página' : 'páginas'}…`);
-      await doc.recognize({
-        langs: ['spa'],
-        ocrPages: rangeMode === 'all' ? 'all' : pageMask,
-        mode: 'quality',
-        skipFontOpt: true,
-      });
+      if (pagesToProcess.length > 0) {
+        const reusedMessage = experimental && auditMode === 'smart' && auditSummary.text
+          ? ` Se conservará el texto existente de ${auditSummary.text}.`
+          : '';
+        announce(`Iniciando OCR en español para ${pagesToProcess.length} ${pagesToProcess.length === 1 ? 'página' : 'páginas'}.${reusedMessage}`);
+        await doc.recognize({
+          langs: ['spa'],
+          ocrPages: experimental ? pageMask : (rangeMode === 'all' ? 'all' : pageMask),
+          mode: 'quality',
+          skipFontOpt: true,
+        });
+      } else {
+        announce('No hay páginas que necesiten OCR. Preparando el resultado con el texto existente…');
+      }
 
       const issues = analyzeQuality(doc, pagesToProcess, failedPagesRef.current);
       setQualityIssues(issues);
@@ -434,7 +495,7 @@ export default function App({ experimental = false }) {
       if (format === 'md') {
         announce('Preparando Markdown…');
         const chunks = [];
-        for (const pageIndex of pagesToProcess) {
+        for (const pageIndex of pagesForOutput) {
           const pageText = String(await doc.exportData('text', { pageArr: [pageIndex] })).trim();
           const issue = issues.find((item) => item.page === pageIndex + 1);
           const qualityNote = issue ? `\n<!-- Revisión recomendada: ${issue.label} -->` : '';
@@ -450,7 +511,7 @@ export default function App({ experimental = false }) {
         const bytes = await doc.exportData('pdf', {
           displayMode: 'invis',
           addOverlay: true,
-          pageArr: pagesToProcess,
+          pageArr: pagesForOutput,
         });
         blob = new Blob([bytes], { type: 'application/pdf' });
         name = `${baseName(file.name)}${rangeSuffix}-buscable.pdf`;
@@ -458,7 +519,14 @@ export default function App({ experimental = false }) {
 
       const url = URL.createObjectURL(blob);
       resultUrlRef.current = url;
-      setDownload({ url, name, pageTotal: pagesToProcess.length });
+      setDownload({
+        url,
+        name,
+        pageTotal: pagesForOutput.length,
+        ocrTotal: pagesToProcess.length,
+        reusedTotal: experimental && auditMode === 'smart' ? auditSummary.text : 0,
+        blankTotal: experimental && auditMode === 'smart' ? auditSummary.blank : 0,
+      });
       setCurrentPage(pagesToProcess.length);
       const elapsed = startedAtRef.current ? (Date.now() - startedAtRef.current) / 1000 : 0;
       setTiming({ elapsed, remaining: 0 });
@@ -480,6 +548,8 @@ export default function App({ experimental = false }) {
     setFile(null);
     setStage('empty');
     setPageCount(null);
+    setPageAudit(null);
+    setAuditMode('smart');
     setRangeMode('all');
     setRangeStart(1);
     setRangeEnd(1);
@@ -492,6 +562,10 @@ export default function App({ experimental = false }) {
   }
 
   const rangePages = selectedPageIndices(pageCount, rangeMode, rangeStart, rangeEnd);
+  const selectedAudit = pageAudit ? summarizeAudit(pageAudit, rangePages) : null;
+  const selectedOcrTotal = experimental && auditMode === 'smart' && selectedAudit
+    ? selectedAudit.ocr
+    : rangePages.length;
   const rangeInvalid = rangeMode === 'range' && rangePages.length === 0;
   const progress = processingTotal
     ? Math.min(100, Math.round((currentPage / processingTotal) * 100))
@@ -505,7 +579,7 @@ export default function App({ experimental = false }) {
       <header>
         <div className="mark" aria-hidden="true">Aa</div>
         <div>
-          <h1>OCR Local {experimental && <span className="beta-badge">Pruebas v1</span>}</h1>
+          <h1>OCR Local {experimental && <span className="beta-badge">Pruebas v0.2</span>}</h1>
           <p>Convertí un PDF escaneado en texto, sin subirlo a internet.</p>
         </div>
       </header>
@@ -524,6 +598,12 @@ export default function App({ experimental = false }) {
             <option value="graphite">Neón gris</option>
           </select>
         </div>
+      )}
+
+      {!experimental && (
+        <a className="version-switch" href="/ocr_web/pruebas/v1/">
+          Probar la versión 0.2 <span>Auditoría previa, Turbo y temas →</span>
+        </a>
       )}
 
       <section className="card" aria-live="polite">
@@ -643,6 +723,27 @@ export default function App({ experimental = false }) {
               </fieldset>
             )}
 
+            {experimental && pageAudit && selectedAudit && (
+              <fieldset className="audit-panel">
+                <legend>Auditoría previa</legend>
+                <p>La aplicación revisó la estructura del PDF sin enviarlo ni ejecutar todavía el OCR.</p>
+                <div className="audit-counts" role="status" aria-label="Resultado de la auditoría previa">
+                  <div><strong>{selectedAudit.text}</strong><span>con texto reutilizable</span></div>
+                  <div><strong>{selectedAudit.ocr}</strong><span>requieren OCR o revisión</span></div>
+                  <div><strong>{selectedAudit.blank}</strong><span>aparentemente en blanco</span></div>
+                </div>
+                <label className={auditMode === 'smart' ? 'option selected' : 'option'}>
+                  <input type="radio" name="audit-mode" checked={auditMode === 'smart'} onChange={() => setAuditMode('smart')} />
+                  <span><strong>Procesamiento inteligente</strong><small>Reutiliza el texto existente y aplica OCR sólo donde hace falta</small></span>
+                </label>
+                <label className={auditMode === 'all' ? 'option selected' : 'option'}>
+                  <input type="radio" name="audit-mode" checked={auditMode === 'all'} onChange={() => setAuditMode('all')} />
+                  <span><strong>Forzar OCR en todas</strong><small>Útil si el texto seleccionable existente es incorrecto o de mala calidad</small></span>
+                </label>
+                <small className="audit-caveat">La auditoría detecta presencia y legibilidad estructural; no garantiza que el texto previo sea exacto.</small>
+              </fieldset>
+            )}
+
             <fieldset>
               <legend>Páginas a procesar</legend>
               <label className={rangeMode === 'all' ? 'option selected' : 'option'}>
@@ -677,7 +778,11 @@ export default function App({ experimental = false }) {
             </fieldset>
 
             <button className="primary" disabled={rangeInvalid} onClick={() => void processDocument()}>
-              Procesar {rangeMode === 'range' ? 'páginas seleccionadas' : 'documento'} <span>→</span>
+              {experimental && auditMode === 'smart'
+                ? selectedOcrTotal > 0
+                  ? `Procesar ${selectedOcrTotal} ${selectedOcrTotal === 1 ? 'página' : 'páginas'} con OCR`
+                  : 'Generar resultado sin repetir OCR'
+                : `Procesar ${rangeMode === 'range' ? 'páginas seleccionadas' : 'documento'}`} <span>→</span>
             </button>
           </>
         )}
@@ -709,6 +814,12 @@ export default function App({ experimental = false }) {
             <div className="check" aria-hidden="true">✓</div>
             <h2>Documento procesado</h2>
             <p>{download.pageTotal} {download.pageTotal === 1 ? 'página procesada' : 'páginas procesadas'}.</p>
+            {experimental && (
+              <div className="audit-result">
+                <strong>{download.ocrTotal} con OCR nuevo</strong>
+                <span>{download.reusedTotal} con texto reutilizado · {download.blankTotal} en blanco</span>
+              </div>
+            )}
             {qualityIssues.length > 0 && (
               <div className="quality-report" role="status">
                 <strong>{qualityIssues.length} {qualityIssues.length === 1 ? 'página requiere' : 'páginas requieren'} revisión</strong>
