@@ -22,8 +22,10 @@ No se incorporan cuentas, analíticas, telemetría, almacenamiento persistente n
 
 La versión estable se publica en la raíz del sitio. La prueba paralela se publica en [`/pruebas/v1/`](https://fran1599.github.io/ocr_web/pruebas/v1/) y no modifica el flujo de la versión estable.
 
-La prueba v1 incorpora:
+La prueba v0.2 —publicada en la ruta histórica `/pruebas/v1/` para no romper enlaces guardados— incorpora:
 
+- auditoría previa por página para reutilizar texto seleccionable, reservar el OCR para páginas que lo necesitan e identificar páginas aparentemente en blanco;
+- opción para forzar OCR en todas las páginas cuando la capa de texto existente sea incorrecta;
 - selección manual entre Ahorro, Equilibrado y Turbo;
 - límite Turbo dinámico según los procesadores lógicos y, cuando el navegador lo informa, la memoria aproximada;
 - tiempo transcurrido y estimación restante;
@@ -43,6 +45,8 @@ Se recomiendan versiones actuales de Chrome, Edge, Brave o Firefox en una comput
 - Más de 500 MB: no se abre el documento para evitar agotar la memoria del navegador.
 
 La confianza informada por el OCR es una estimación y no reemplaza la revisión humana.
+
+La auditoría previa detecta presencia y legibilidad estructural del texto. No puede garantizar que una capa OCR preexistente sea semánticamente correcta; ante dudas debe utilizarse **Forzar OCR en todas**.
 
 La cantidad de páginas también importa: un archivo liviano con cientos de páginas puede exigir más memoria y tiempo que otro archivo más pesado pero corto. Para documentos extensos se recomienda probar primero un rango representativo.
 
